@@ -1,0 +1,825 @@
+---
+title: "Metis Project 2"
+author: "Matt Garcia"
+output: html_document
+---
+
+
+# Loading of relevant libraries:
+
+```{r message=FALSE}
+library(Lahman)
+library(pitchRx)
+library(dplyr)
+library(dbplyr)
+library(RSQLite)
+library(gdata)
+library(stringr)
+library(readxl)
+library(caret)
+#library(xlsx)
+```
+
+
+# Creation of an SQLite3 database:
+
+```{r}
+#db <- src_sqlite("pitchfx2018.sqlite3", create = T)
+#files <- c("inning/inning_hit.xml", "miniscoreboard.xml", "players.xml")
+#scrape(start = "2017-03-28", end = "2017-09-30", connect = db$con)
+```
+
+
+# Collecting master data:
+
+```{r}
+db <- src_sqlite("pitchfx2018.sqlite3", create = F)
+atbats <- tbl(db, 'atbat')
+  #select(batter_name, pitcher_name, event, stand, p_throws, atbat_des, event_num, num, gameday_link)
+pitches <- tbl(db, 'pitch')
+  #select(pitch_type, start_speed, px, pz, num, gameday_link)
+master <- collect(inner_join(atbats, pitches, by = c('num', 'gameday_link')))
+#master <- master %>%
+#  distinct(batter_name, gameday_link, event_num, .keep_all = TRUE)
+master <- master %>%
+  mutate(grounders = ifelse(grepl('ground', atbat_des) | grepl('grounds', atbat_des), 1, 0)) %>%
+  mutate(liners = ifelse(grepl('line', atbat_des) | grepl('lines', atbat_des), 1, 0)) %>%
+  mutate(flies = ifelse(grepl('fly', atbat_des) | grepl('flies', atbat_des), 1, 0)) %>%
+  mutate(singles = ifelse(event == 'Single', 1, 0)) %>%
+  mutate(doubles = ifelse(event == 'Double', 1, 0)) %>%
+  mutate(triples = ifelse(event == 'Triple', 1, 0)) %>%
+  mutate(homeruns = ifelse(event == 'Home Run', 1, 0)) %>%
+  mutate(walks = ifelse(event == 'Walk', 1, 0)) %>%
+  mutate(strikeouts = ifelse(event == 'Strikeout' | event == 'Strikeout - DP', 1, 0)) %>%
+  mutate(hitbypitch = ifelse(event == 'Hit By Pitch', 1, 0)) %>%
+  mutate(intentional_walks = ifelse(event == 'Intent Walk', 1, 0)) %>%
+  mutate(errors = ifelse(event == 'Field Error', 1, 0)) %>%
+  mutate(interferences = ifelse(event == 'Catcher interference'| event == 'Batter interference' | event == 'Fan interference', 1, 0)) %>%
+  mutate(sac_bunts = ifelse(event == 'Sac Bunt'| event == 'Sacrifice Bunt DP', 1, 0)) %>%
+  mutate(sac_flies = ifelse(event == 'Sac Fly'| event == 'Sac Fly DP', 1, 0)) %>%
+  mutate(outs = ifelse(event == 'Forceout' | event == 'Groundout' | event == 'Lineout' | event == 'Pop Out' | event == 'Flyout' | event == 'Grounded Into DP' | event == 'Bunt Groundout' | event == 'Bunt Lineout' | event == 'Bunt Pop Out' | event == 'Double Play' | event == 'Fielders Choice' | event == 'Fielders Choice Out' | event == 'Triple Play', 1, 0))
+```
+
+
+# Create lists of hitters and pitchers with handedness:
+
+```{r}
+batter_handedness <- master %>%
+  distinct(batter_name, .keep_all = TRUE) %>%
+  select(batter_name, stand)
+
+pitcher_handedness <- master %>%
+  distinct(pitcher_name, .keep_all = TRUE) %>%
+  select(pitcher_name, p_throws)
+```
+
+
+# Adding hitter stats:
+
+```{r}
+# vs all
+hit_data <- master %>%
+  group_by(batter_name) %>%
+  filter(batter_name != 'N/A') %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks) + sum(intentional_walks), strikeouts = sum(strikeouts), hitbypitch = sum(hitbypitch), intentional_walks = sum(intentional_walks), errors = sum(errors), interferences = sum(interferences), sac_bunts = sum(sac_bunts), sac_flies = sum(sac_flies), outs = sum(outs), grounders = sum(grounders), liners = sum(liners), flies = sum(flies)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs) %>%
+  mutate(plate_appearances = atbats + hitbypitch + walks - intentional_walks + errors + interferences + sac_bunts + sac_flies) %>%
+  mutate(bip = singles + doubles + triples + homeruns + outs) %>%
+  mutate(wOBA = (((.69 * walks) + (.72 * hitbypitch) + (.88 * singles) + (1.21 * doubles) + (1.53 * triples) + (1.97 * homeruns))/ (atbats + walks - intentional_walks + sac_flies + hitbypitch)))
+
+hit_data <- hit_data %>%
+  group_by(batter_name) %>%
+  summarise(batter_BB = walks / plate_appearances, batter_K = strikeouts / plate_appearances, batter_BBK = walks / strikeouts, batter_AVG = (singles + doubles + triples + homeruns) / atbats, batter_OBP = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies), batter_SLG = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, batter_OPS = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies) + (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, batter_ISO = (2 * doubles + 3 * triples + 3 * homeruns) / atbats, batter_BABIP = (singles + doubles + triples) / (atbats - strikeouts - homeruns + sac_flies), batter_wRC = (((wOBA - .315) / 1.226) + .117) * plate_appearances, batter_wRAA = ((wOBA - .318) / 1.19) * plate_appearances, batter_wOBA = wOBA, batter_GBFB = grounders / flies, batter_GB = grounders / bip, batter_LD = liners / bip, batter_FB = flies / bip, batter_HRFB = homeruns / flies)
+
+# vs right-handed pitchers
+hit_datavsR <- master %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  filter(batter_name != 'N/A') %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks) + sum(intentional_walks), strikeouts = sum(strikeouts), hitbypitch = sum(hitbypitch), intentional_walks = sum(intentional_walks), errors = sum(errors), interferences = sum(interferences), sac_bunts = sum(sac_bunts), sac_flies = sum(sac_flies), outs = sum(outs), grounders = sum(grounders), liners = sum(liners), flies = sum(flies)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs) %>%
+  mutate(plate_appearances = atbats + hitbypitch + walks - intentional_walks + errors + interferences + sac_bunts + sac_flies) %>%
+  mutate(bip = singles + doubles + triples + homeruns + outs) %>%
+  mutate(wOBAvsR = (((.69 * walks) + (.72 * hitbypitch) + (.88 * singles) + (1.21 * doubles) + (1.53 * triples) + (1.97 * homeruns))/ (atbats + walks - intentional_walks + sac_flies + hitbypitch)))
+
+hit_datavsR <- hit_datavsR %>%
+  group_by(batter_name) %>%
+  summarise(batter_BBvsR = walks / plate_appearances, batter_KvsR = strikeouts / plate_appearances, batter_BBKvsR = walks / strikeouts, batter_AVGvsR = (singles + doubles + triples + homeruns) / atbats, batter_OBPvsR = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies), batter_SLGvsR = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, batter_OPSvsR = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies) + (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, batter_ISOvsR = (2 * doubles + 3 * triples + 3 * homeruns) / atbats, batter_BABIPvsR = (singles + doubles + triples) / (atbats - strikeouts - homeruns + sac_flies), batter_wRCvsR = (((wOBAvsR - .318) / 1.19) + .119) * plate_appearances, batter_wRAAvsR = ((wOBAvsR - .318) / 1.19) * plate_appearances, batter_wOBAvsR = wOBAvsR, batter_GBFBvsR = grounders / flies, batter_GBvsR = grounders / bip, batter_LDvsR = liners / bip, batter_FBvsR = flies / bip, batter_HRFBvsR = homeruns / flies)
+
+# vs left-handed pitchers
+hit_datavsL <- master %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  filter(batter_name != 'N/A') %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks) + sum(intentional_walks), strikeouts = sum(strikeouts), hitbypitch = sum(hitbypitch), intentional_walks = sum(intentional_walks), errors = sum(errors), interferences = sum(interferences), sac_bunts = sum(sac_bunts), sac_flies = sum(sac_flies), outs = sum(outs), grounders = sum(grounders), liners = sum(liners), flies = sum(flies)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs) %>%
+  mutate(plate_appearances = atbats + hitbypitch + walks - intentional_walks + errors + interferences + sac_bunts + sac_flies) %>%
+  mutate(bip = singles + doubles + triples + homeruns + outs) %>%
+  mutate(wOBAvsL = (((.69 * walks) + (.72 * hitbypitch) + (.88 * singles) + (1.22 * doubles) + (1.56 * triples) + (2.04 * homeruns))/ (atbats + walks - intentional_walks + sac_flies + hitbypitch)))
+
+hit_datavsL <- hit_datavsL %>%
+  group_by(batter_name) %>%
+  summarise(batter_BBvsL = walks / plate_appearances, batter_KvsL = strikeouts / plate_appearances, batter_BBKvsL = walks / strikeouts, batter_AVGvsL = (singles + doubles + triples + homeruns) / atbats, batter_OBPvsL = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies), batter_SLGvsL = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, batter_OPSvsL = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies) + (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, batter_ISOvsL = (2 * doubles + 3 * triples + 3 * homeruns) / atbats, batter_BABIPvsL = (singles + doubles + triples) / (atbats - strikeouts - homeruns + sac_flies), batter_wRCvsL = (((wOBAvsL - .318) / 1.24) + .112) * plate_appearances, batter_wRAAvsL = ((wOBAvsL - .318) / 1.24) * plate_appearances, batter_wOBAvsL = wOBAvsL, batter_GBFBvsL = grounders / flies, batter_GBvsL = grounders / bip, batter_LDvsL = liners / bip, batter_FBvsL = flies / bip, batter_HRFBvsL = homeruns / flies)
+
+
+# combining for ease of use later
+batter_stats <- collect(inner_join(hit_data, hit_datavsR, hit_datavsL, by = c('batter_name')))
+batter_stats <- collect(inner_join(batter_stats, hit_datavsL, by = c('batter_name')))
+```
+
+
+# Adding pitcher stats:
+
+```{r}
+# vs all
+pitch_data <- master %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks) + sum(intentional_walks), strikeouts = sum(strikeouts), hitbypitch = sum(hitbypitch), intentional_walks = sum(intentional_walks), errors = sum(errors), interferences = sum(interferences), sac_bunts = sum(sac_bunts), sac_flies = sum(sac_flies), outs = sum(outs), grounders = sum(grounders), liners = sum(liners), flies = sum(flies)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs) %>%
+  mutate(plate_appearances = atbats + hitbypitch + walks - intentional_walks + errors + interferences + sac_bunts + sac_flies) %>%
+  mutate(bip = singles + doubles + triples + homeruns + outs) %>%
+  mutate(wOBA = (((.69 * walks) + (.72 * hitbypitch) + (.88 * singles) + (1.21 * doubles) + (1.53 * triples) + (1.97 * homeruns))/ (atbats + walks - intentional_walks + sac_flies + hitbypitch)))
+
+pitch_data <- pitch_data %>%
+  group_by(pitcher_name) %>%
+  filter(pitcher_name != 'N/A') %>%
+  summarise(pitcher_BB = walks / plate_appearances, pitcher_K = strikeouts / plate_appearances, pitcher_BBK = walks / strikeouts, pitcher_AVG = (singles + doubles + triples + homeruns) / atbats, pitcher_OBP = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies), pitcher_SLG = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, pitcher_OPS = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies) + (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, pitcher_ISO = (2 * doubles + 3 * triples + 3 * homeruns) / atbats, pitcher_BABIP = (singles + doubles + triples) / (atbats - strikeouts - homeruns + sac_flies), pitcher_FIP = (((13 * homeruns) + (3 * walks) - (2 * strikeouts)) / (atbats / 3)) + 3.10, pitcher_wOBA = wOBA, pitcher_GBFB = grounders / flies, pitcher_GB = grounders / bip, pitcher_LD = liners / bip, pitcher_FB = flies / bip, pitcher_HRFB = homeruns / flies, pitcher_WHIP = (walks + singles + doubles + triples + homeruns) / ((outs + strikeouts)/ 3), pitcher_HR9 = homeruns / ((outs + strikeouts)/ 27))
+
+# vs right-handed hitters
+pitch_datavsR <- master %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks) + sum(intentional_walks), strikeouts = sum(strikeouts), hitbypitch = sum(hitbypitch), intentional_walks = sum(intentional_walks), errors = sum(errors), interferences = sum(interferences), sac_bunts = sum(sac_bunts), sac_flies = sum(sac_flies), outs = sum(outs), grounders = sum(grounders), liners = sum(liners), flies = sum(flies)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs) %>%
+  mutate(plate_appearances = atbats + hitbypitch + walks - intentional_walks + errors + interferences + sac_bunts + sac_flies) %>%
+  mutate(bip = singles + doubles + triples + homeruns + outs) %>%
+  mutate(wOBAvsR = (((.69 * walks) + (.72 * hitbypitch) + (.88 * singles) + (1.21 * doubles) + (1.53 * triples) + (1.97 * homeruns))/ (atbats + walks - intentional_walks + sac_flies + hitbypitch)))
+
+pitch_datavsR <- pitch_datavsR %>%
+  group_by(pitcher_name) %>%
+  filter(pitcher_name != 'N/A') %>%
+  summarise(pitcher_BBvsR = walks / plate_appearances, pitcher_KvsR = strikeouts / plate_appearances, pitcher_BBKvsR = walks / strikeouts, pitcher_AVGvsR = (singles + doubles + triples + homeruns) / atbats, pitcher_OBPvsR = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies), pitcher_SLGvsR = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, pitcher_OPSvsR = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies) + (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, pitcher_ISOvsR = (2 * doubles + 3 * triples + 3 * homeruns) / atbats, pitcher_BABIPvsR = (singles + doubles + triples) / (atbats - strikeouts - homeruns + sac_flies), pitcher_FIPvsR = (((13 * homeruns) + (3 * walks) - (2 * strikeouts)) / (atbats / 3)) + 3.10, pitcher_wOBAvsR = wOBAvsR, pitcher_GBFBvsR = grounders / flies, pitcher_GBvsR = grounders / bip, pitcher_LDvsR = liners / bip, pitcher_FBvsR = flies / bip, pitcher_HRFBvsR = homeruns / flies, pitcher_WHIPvsR = (walks + singles + doubles + triples + homeruns) / ((outs + strikeouts)/ 3), pitcher_HR9vsR = homeruns / ((outs + strikeouts)/ 27))
+
+# vs left-handed hitters
+pitch_datavsL <- master %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks) + sum(intentional_walks), strikeouts = sum(strikeouts), hitbypitch = sum(hitbypitch), intentional_walks = sum(intentional_walks), errors = sum(errors), interferences = sum(interferences), sac_bunts = sum(sac_bunts), sac_flies = sum(sac_flies), outs = sum(outs), grounders = sum(grounders), liners = sum(liners), flies = sum(flies)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs) %>%
+  mutate(plate_appearances = atbats + hitbypitch + walks - intentional_walks + errors + interferences + sac_bunts + sac_flies) %>%
+  mutate(bip = singles + doubles + triples + homeruns + outs) %>%
+  mutate(wOBAvsL = (((.69 * walks) + (.72 * hitbypitch) + (.88 * singles) + (1.21 * doubles) + (1.53 * triples) + (1.97 * homeruns))/ (atbats + walks - intentional_walks + sac_flies + hitbypitch)))
+
+pitch_datavsL <- pitch_datavsL %>%
+  group_by(pitcher_name) %>%
+  filter(pitcher_name != 'N/A') %>%
+  summarise(pitcher_BBvsL = walks / plate_appearances, pitcher_KvsL = strikeouts / plate_appearances, pitcher_BBKvsL = walks / strikeouts, pitcher_AVGvsL = (singles + doubles + triples + homeruns) / atbats, pitcher_OBPvsL = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies), pitcher_SLGvsL = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, pitcher_OPSvsL = (singles + doubles + triples + homeruns + walks + hitbypitch) / (atbats + walks + hitbypitch + sac_flies) + (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats, pitcher_ISOvsL = (2 * doubles + 3 * triples + 3 * homeruns) / atbats, pitcher_BABIPvsL = (singles + doubles + triples) / (atbats - strikeouts - homeruns + sac_flies), pitcher_FIPvsL = (((13 * homeruns) + (3 * walks) - (2 * strikeouts)) / (atbats / 3)) + 3.10, pitcher_wOBAvsL = wOBAvsL, pitcher_GBFBvsL = grounders / flies, pitcher_GBvsL = grounders / bip, pitcher_LDvsL = liners / bip, pitcher_FBvsL = flies / bip, pitcher_HRFBvsL = homeruns / flies, pitcher_WHIPvsL = (walks + singles + doubles + triples + homeruns) / ((outs + strikeouts)/ 3), pitcher_HR9vsL = homeruns / ((outs + strikeouts)/ 27))
+
+# combining for ease of use later
+pitcher_stats <- collect(inner_join(pitch_data, pitch_datavsR, pitch_datavsL, by = c('pitcher_name')))
+pitcher_stats <- collect(inner_join(pitcher_stats, pitch_datavsL, by = c('pitcher_name')))
+```
+
+
+# Creating hot zones:
+
+```{r}
+# creation of hot zone 1:
+
+zone1 <- master %>%
+  filter(px >= -1) %>%
+  filter(px <= -0.333) %>%
+  filter(pz >= 2.8333) %>%
+  filter(pz <= 3.5)
+
+# creation of hot zone 2:
+
+zone2 <- master %>%
+  filter(px >= -0.333) %>%
+  filter(px <= 0.333) %>%
+  filter(pz >= 2.8333) %>%
+  filter(pz <= 3.5)
+
+# creation of hot zone 3:
+    
+zone3 <- master %>%
+  filter(px >= 0.333) %>%
+  filter(px <= 1) %>%
+  filter(pz >= 2.8333) %>%
+  filter(pz <= 3.5)
+  
+# creation of hot zone 4:  
+  
+zone4 <- master %>%
+  filter(px >= -1) %>%
+  filter(px <= -0.333) %>%
+  filter(pz >= 2.1666) %>%
+  filter(pz <= 2.8333)
+  
+# creation of hot zone 5:
+
+zone5 <- master %>%
+  filter(px >= -0.333) %>%
+  filter(px <= 0.333) %>%
+  filter(pz >= 2.1666) %>%
+  filter(pz <= 2.8333)
+
+# creation of hot zone 6:
+
+zone6 <- master %>%
+  filter(px >= 0.333) %>%
+  filter(px <= 1) %>%
+  filter(pz >= 2.1666) %>%
+  filter(pz <= 2.8333)
+  
+# creation of hot zone 7:
+
+zone7 <- master %>%
+  filter(px >= -1) %>%
+  filter(px <= -0.333) %>%
+  filter(pz >= 1.5) %>%
+  filter(pz <= 2.1666)
+  
+# creation of hot zone 8:
+
+zone8 <- master %>%
+  filter(px >= -0.333) %>%
+  filter(px <= 0.333) %>%
+  filter(pz >= 1.5) %>%
+  filter(pz <= 2.1666)
+  
+# creation of hot zone 9:
+
+zone9 <- master %>%
+  filter(px >= 0.333) %>%
+  filter(px <= 1) %>%
+  filter(pz >= 1.5) %>%
+  filter(pz <= 2.1666)
+
+```
+
+
+# Separating data in hot zones for batters and pitchers:
+
+```{r}
+# hitters
+
+hit_zone1_R <- zone1 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone1_R <- hit_zone1_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R1 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+
+hit_zone2_R <- zone2 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone2_R <- hit_zone2_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R2 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(hit_zone1_R, hit_zone2_R, by = c('batter_name')))
+
+hit_zone3_R <- zone3 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone3_R <- hit_zone3_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R3 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone3_R, by = c('batter_name')))
+
+hit_zone4_R <- zone4 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone4_R <- hit_zone4_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R4 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone4_R, by = c('batter_name')))
+
+hit_zone5_R <- zone5 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone5_R <- hit_zone5_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R5 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone5_R, by = c('batter_name')))
+
+hit_zone6_R <- zone6 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone6_R <- hit_zone6_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R6 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone6_R, by = c('batter_name')))
+
+hit_zone7_R <- zone7 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone7_R <- hit_zone7_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R7 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone7_R, by = c('batter_name')))
+
+hit_zone8_R <- zone8 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone8_R <- hit_zone8_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R8 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone8_R, by = c('batter_name')))
+
+hit_zone9_R <- zone9 %>%
+  filter(p_throws == 'R') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone9_R <- hit_zone9_R %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_R9 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone9_R, by = c('batter_name')))
+
+hit_zone1_L <- zone1 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone1_L <- hit_zone1_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L1 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone1_L, by = c('batter_name')))
+
+hit_zone2_L <- zone2 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone2_L <- hit_zone2_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L2 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone2_L, by = c('batter_name')))
+
+hit_zone3_L <- zone3 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone3_L <- hit_zone3_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L3 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone3_L, by = c('batter_name')))
+
+hit_zone4_L <- zone4 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone4_L <- hit_zone4_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L4 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone4_L, by = c('batter_name')))
+
+hit_zone5_L <- zone5 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone5_L <- hit_zone5_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L5 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone5_L, by = c('batter_name')))
+
+hit_zone6_L <- zone6 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone6_L <- hit_zone6_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L6 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone6_L, by = c('batter_name')))
+
+hit_zone7_L <- zone7 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone7_L <- hit_zone7_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L7 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone7_L, by = c('batter_name')))
+
+hit_zone8_L <- zone8 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone8_L <- hit_zone8_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L8 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone8_L, by = c('batter_name')))
+
+hit_zone9_L <- zone9 %>%
+  filter(p_throws == 'L') %>%
+  group_by(batter_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone9_L <- hit_zone9_L %>%
+  group_by(batter_name) %>%
+  summarise(batter_vs_L9 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+batters <- collect(inner_join(batters, hit_zone9_L, by = c('batter_name'))) %>%
+  filter(batter_name != 'N/A')
+
+# pitchers
+
+hit_zone1_pitch_R <- zone1 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone1_pitch_R <- hit_zone1_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R1 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+
+hit_zone2_pitch_R <- zone2 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone2_pitch_R <- hit_zone2_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R2 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(hit_zone1_pitch_R, hit_zone2_pitch_R, by = c('pitcher_name')))
+
+hit_zone3_pitch_R <- zone3 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone3_pitch_R <- hit_zone3_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R3 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone3_pitch_R, by = c('pitcher_name')))
+
+hit_zone4_pitch_R <- zone4 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone4_pitch_R <- hit_zone4_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R4 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone4_pitch_R, by = c('pitcher_name')))
+
+hit_zone5_pitch_R <- zone5 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone5_pitch_R <- hit_zone5_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R5 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone5_pitch_R, by = c('pitcher_name')))
+
+hit_zone6_pitch_R <- zone6 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone6_pitch_R <- hit_zone6_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R6 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone6_pitch_R, by = c('pitcher_name')))
+
+hit_zone7_pitch_R <- zone7 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone7_pitch_R <- hit_zone7_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R7 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone7_pitch_R, by = c('pitcher_name')))
+
+hit_zone8_pitch_R <- zone8 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone8_pitch_R <- hit_zone8_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R8 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone8_pitch_R, by = c('pitcher_name')))
+
+hit_zone9_pitch_R <- zone9 %>%
+  filter(stand == 'R') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone9_pitch_R <- hit_zone9_pitch_R %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_R9 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone9_pitch_R, by = c('pitcher_name')))
+
+hit_zone1_pitch_L <- zone1 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone1_pitch_L <- hit_zone1_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L1 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone1_pitch_L, by = c('pitcher_name')))
+
+hit_zone2_pitch_L <- zone2 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone2_pitch_L <- hit_zone2_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L2 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone2_pitch_L, by = c('pitcher_name')))
+
+hit_zone3_pitch_L <- zone3 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone3_pitch_L <- hit_zone3_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L3 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone3_pitch_L, by = c('pitcher_name')))
+
+hit_zone4_pitch_L <- zone4 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone4_pitch_L <- hit_zone4_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L4 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone4_pitch_L, by = c('pitcher_name')))
+
+hit_zone5_pitch_L <- zone5 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone5_pitch_L <- hit_zone5_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L5 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone5_pitch_L, by = c('pitcher_name')))
+
+hit_zone6_pitch_L <- zone6 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone6_pitch_L <- hit_zone6_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L6 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone6_pitch_L, by = c('pitcher_name')))
+
+hit_zone7_pitch_L <- zone7 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone7_pitch_L <- hit_zone7_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L7 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone7_pitch_L, by = c('pitcher_name')))
+
+hit_zone8_pitch_L <- zone8 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone8_pitch_L <- hit_zone8_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L8 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone8_pitch_L, by = c('pitcher_name')))
+
+hit_zone9_pitch_L <- zone9 %>%
+  filter(stand == 'L') %>%
+  group_by(pitcher_name) %>%
+  summarise(singles = sum(singles), doubles = sum(doubles), triples = sum(triples), homeruns = sum(homeruns), walks = sum(walks), strikeouts = sum(strikeouts), outs = sum(outs)) %>%
+  mutate(atbats = singles + doubles + triples + homeruns + strikeouts + outs)
+hit_zone9_pitch_L <- hit_zone9_pitch_L %>%
+  group_by(pitcher_name) %>%
+  summarise(pitcher_vs_L9 = (singles + (2 * doubles) + (3 * triples) + (4 * homeruns)) / atbats)
+pitchers <- collect(inner_join(pitchers, hit_zone9_pitch_L, by = c('pitcher_name'))) %>%
+  filter(pitcher_name != 'N/A')
+
+# combining and organizing
+
+hitter_hot_zone_ranks_vsR <- data.frame(batters, t(apply(-batters[2:10], 1, rank, ties.method='min')))
+
+hitter_hot_zone_ranks_vsL <- data.frame(batters, t(apply(-batters[11:19], 1, rank, ties.method='min')))
+
+batters <- collect(inner_join(hitter_hot_zone_ranks_vsR, hitter_hot_zone_ranks_vsL, by = c('batter_name')))
+
+batters <- batters %>%
+  select(batter_name, batter_vs_R1.1, batter_vs_R2.1, batter_vs_R3.1, batter_vs_R4.1, batter_vs_R5.1, batter_vs_R6.1, batter_vs_R7.1, batter_vs_R8.1, batter_vs_R9.1, batter_vs_L1.1, batter_vs_L2.1, batter_vs_L3.1, batter_vs_L4.1, batter_vs_L5.1, batter_vs_L6.1, batter_vs_L7.1, batter_vs_L8.1, batter_vs_L9.1)
+
+pitcher_hot_zone_ranks_vsR <- data.frame(pitchers, t(apply(-pitchers[2:10], 1, rank, ties.method='min')))
+
+pitcher_hot_zone_ranks_vsL <- data.frame(pitchers, t(apply(-pitchers[11:19], 1, rank, ties.method='min')))
+
+pitchers <- collect(inner_join(pitcher_hot_zone_ranks_vsR, pitcher_hot_zone_ranks_vsL, by = c('pitcher_name')))
+
+pitchers <- pitchers %>%
+  select(pitcher_name, pitcher_vs_R1.1, pitcher_vs_R2.1, pitcher_vs_R3.1, pitcher_vs_R4.1, pitcher_vs_R5.1, pitcher_vs_R6.1, pitcher_vs_R7.1, pitcher_vs_R8.1, pitcher_vs_R9.1, pitcher_vs_L1.1, pitcher_vs_L2.1, pitcher_vs_L3.1, pitcher_vs_L4.1, pitcher_vs_L5.1, pitcher_vs_L6.1, pitcher_vs_L7.1, pitcher_vs_L8.1, pitcher_vs_L9.1)
+
+colnames(batters)[colnames(batters)=="batter_vs_R1.1"] <- "BVR1"
+colnames(batters)[colnames(batters)=="batter_vs_R2.1"] <- "BVR2"
+colnames(batters)[colnames(batters)=="batter_vs_R3.1"] <- "BVR3"
+colnames(batters)[colnames(batters)=="batter_vs_R4.1"] <- "BVR4"
+colnames(batters)[colnames(batters)=="batter_vs_R5.1"] <- "BVR5"
+colnames(batters)[colnames(batters)=="batter_vs_R6.1"] <- "BVR6"
+colnames(batters)[colnames(batters)=="batter_vs_R7.1"] <- "BVR7"
+colnames(batters)[colnames(batters)=="batter_vs_R8.1"] <- "BVR8"
+colnames(batters)[colnames(batters)=="batter_vs_R9.1"] <- "BVR9"
+colnames(batters)[colnames(batters)=="batter_vs_L1.1"] <- "BVL1"
+colnames(batters)[colnames(batters)=="batter_vs_L2.1"] <- "BVL2"
+colnames(batters)[colnames(batters)=="batter_vs_L3.1"] <- "BVL3"
+colnames(batters)[colnames(batters)=="batter_vs_L4.1"] <- "BVL4"
+colnames(batters)[colnames(batters)=="batter_vs_L5.1"] <- "BVL5"
+colnames(batters)[colnames(batters)=="batter_vs_L6.1"] <- "BVL6"
+colnames(batters)[colnames(batters)=="batter_vs_L7.1"] <- "BVL7"
+colnames(batters)[colnames(batters)=="batter_vs_L8.1"] <- "BVL8"
+colnames(batters)[colnames(batters)=="batter_vs_L9.1"] <- "BVL9"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R1.1"] <- "PVR1"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R2.1"] <- "PVR2"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R3.1"] <- "PVR3"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R4.1"] <- "PVR4"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R5.1"] <- "PVR5"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R6.1"] <- "PVR6"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R7.1"] <- "PVR7"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R8.1"] <- "PVR8"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_R9.1"] <- "PVR9"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L1.1"] <- "PVL1"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L2.1"] <- "PVL2"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L3.1"] <- "PVL3"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L4.1"] <- "PVL4"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L5.1"] <- "PVL5"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L6.1"] <- "PVL6"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L7.1"] <- "PVL7"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L8.1"] <- "PVL8"
+colnames(pitchers)[colnames(pitchers)=="pitcher_vs_L9.1"] <- "PVL9"
+```
+
+
+# Joining all stats for each batter and pitcher:
+
+```{r}
+batter_stats <- collect(inner_join(batter_stats, batters, by = c('batter_name')))
+pitcher_stats <- collect(inner_join(pitcher_stats, pitchers, by = c('pitcher_name')))
+```
+
+
+# Adding handedness for each batter and pitcher:
+
+```{r}
+batter_stats <- collect(inner_join(batter_stats, batter_handedness, by = c('batter_name')))
+pitcher_stats <- collect(inner_join(pitcher_stats, pitcher_handedness, by = c('pitcher_name')))
+```
+
+
+# Bringing in pitcher data from Python:
+
+```{r warning=FALSE}
+pandas_pitchers = read.csv(file="pitcher_movement.csv", header=TRUE, sep=",")
+pitcher_fin <- collect(inner_join(pandas_pitchers, pitcher_stats, by = c('pitcher_name')))
+```
+
+
+# Changing pitch types to match MLB style:
+
+```{r}
+pitcher_fin <- pitcher_fin %>%
+  mutate_all(str_replace_all, "Curveball", "CU") %>%
+  mutate_all(str_replace_all, "Changeup", "CH") %>%
+  mutate_all(str_replace_all, "Two-Seamer", "FT") %>%
+  mutate_all(str_replace_all, "Four-Seamer", "FF") %>%
+  mutate_all(str_replace_all, "Slider", "SL") %>%
+  mutate_all(str_replace_all, "Cutter", "FC") %>%
+  mutate_all(str_replace_all, "Sinker", "SI") %>%
+  mutate_all(str_replace_all, "Knuckle-Curve", "KC") %>%
+  mutate_all(str_replace_all, "Split-Finger", "KC")
+```
+
+
+# Adding in specific pitch instances data:
+
+```{r}
+all_pitch_data <-master %>%
+  select(pitcher_name, start_speed, pitch_type, px, pz, stand, batter_name)
+all_pitch_data <- collect(inner_join(all_pitch_data, batter_stats, by = c('batter_name')))
+```
+
+```{r}
+reg_data <- collect(inner_join(all_pitch_data, pitcher_fin, by = c('pitcher_name')))
+reg_data <- reg_data %>%
+  filter(pitch_type.x == pitch_type.y)
+colnames(reg_data)[colnames(reg_data)=="stand.x"] <- "stand"
+colnames(reg_data)[colnames(reg_data)=="p_throws.x"] <- "p_throws"
+reg_data <- reg_data[,c(1,2,79,155,3:78, 80:154)]
+```
+
+
+# Adding split stats based on handedness:
+
+```{r warning=FALSE}
+reg_data[55:155] <- lapply(reg_data[55:155], as.numeric)
+
+reg_data <- reg_data %>%
+  mutate(split_batter_BB = ifelse(p_throws == "R", batter_BBvsR, batter_BBvsL)) %>%
+  mutate(split_batter_K = ifelse(p_throws == "R", batter_KvsR, batter_KvsL)) %>%
+  mutate(split_batter_AVG = ifelse(p_throws == "R", batter_AVGvsR, batter_AVGvsL)) %>%
+  mutate(split_batter_OBP = ifelse(p_throws == "R", batter_OBPvsR, batter_OBPvsL)) %>%
+  mutate(split_batter_SLG = ifelse(p_throws == "R", batter_SLGvsR, batter_SLGvsL)) %>%
+  mutate(split_batter_ISO = ifelse(p_throws == "R", batter_ISOvsR, batter_ISOvsL)) %>%
+  mutate(split_batter_wRC = ifelse(p_throws == "R", batter_wRCvsR, batter_wRCvsL)) %>%
+  mutate(split_batter_wRAA = ifelse(p_throws == "R", batter_wRAAvsR, batter_wRAAvsL)) %>%
+  mutate(split_batter_wOBA = ifelse(p_throws == "R", batter_wOBAvsR, batter_wOBAvsL)) %>%
+  mutate(split_batter_GB = ifelse(p_throws == "R", batter_GBvsR, batter_GBvsL)) %>%
+  mutate(split_batter_LD = ifelse(p_throws == "R", batter_LDvsR, batter_LDvsL)) %>%
+  mutate(split_batter_FB = ifelse(p_throws == "R", batter_FBvsR, batter_FBvsL)) %>%
+  mutate(split_batter_HRFB = ifelse(p_throws == "R", batter_HRFBvsR, batter_HRFBvsL)) %>%
+  mutate(split_batter_zone1 = ifelse(p_throws == "R", BVR1, BVL1)) %>%
+  mutate(split_batter_zone2 = ifelse(p_throws == "R", BVR2, BVL2)) %>%
+  mutate(split_batter_zone3 = ifelse(p_throws == "R", BVR3, BVL3)) %>%
+  mutate(split_batter_zone4 = ifelse(p_throws == "R", BVR4, BVL4)) %>%
+  mutate(split_batter_zone5 = ifelse(p_throws == "R", BVR5, BVL5)) %>%
+  mutate(split_batter_zone6 = ifelse(p_throws == "R", BVR6, BVL6)) %>%
+  mutate(split_batter_zone7 = ifelse(p_throws == "R", BVR7, BVL7)) %>%
+  mutate(split_batter_zone8 = ifelse(p_throws == "R", BVR8, BVL8)) %>%
+  mutate(split_batter_zone9 = ifelse(p_throws == "R", BVR9, BVL9)) %>%
+  mutate(split_pitcher_BB = ifelse(stand == "R", pitcher_BBvsR, pitcher_BBvsL)) %>%
+  mutate(split_pitcher_K = ifelse(stand == "R", pitcher_KvsR, pitcher_KvsL)) %>%
+  mutate(split_pitcher_AVG = ifelse(stand == "R", pitcher_AVGvsR, pitcher_AVGvsL)) %>%
+  mutate(split_pitcher_OBP = ifelse(stand == "R", pitcher_OBPvsR, pitcher_OBPvsL)) %>%
+  mutate(split_pitcher_SLG = ifelse(stand == "R", pitcher_SLGvsR, pitcher_SLGvsL)) %>%
+  mutate(split_pitcher_ISO = ifelse(stand == "R", pitcher_ISOvsR, pitcher_ISOvsL)) %>%
+  mutate(split_pitcher_WHIP = ifelse(stand == "R", pitcher_WHIPvsR, pitcher_WHIPvsL)) %>%
+  mutate(split_pitcher_FIP = ifelse(stand == "R", pitcher_FIPvsR, pitcher_FIPvsL)) %>%
+  mutate(split_pitcher_GB = ifelse(stand == "R", pitcher_GBvsR, pitcher_GBvsL)) %>%
+  mutate(split_pitcher_LD = ifelse(stand == "R", pitcher_LDvsR, pitcher_LDvsL)) %>%
+  mutate(split_pitcher_FB = ifelse(stand == "R", pitcher_FBvsR, pitcher_FBvsL)) %>%
+  mutate(split_pitcher_HRFB = ifelse(stand == "R", pitcher_HRFBvsR, pitcher_HRFBvsL)) %>%
+  mutate(split_pitcher_zone1 = ifelse(stand == "R", PVR1, PVL1)) %>%
+  mutate(split_pitcher_zone2 = ifelse(stand == "R", PVR2, PVL2)) %>%
+  mutate(split_pitcher_zone3 = ifelse(stand == "R", PVR3, PVL3)) %>%
+  mutate(split_pitcher_zone4 = ifelse(stand == "R", PVR4, PVL4)) %>%
+  mutate(split_pitcher_zone5 = ifelse(stand == "R", PVR5, PVL5)) %>%
+  mutate(split_pitcher_zone6 = ifelse(stand == "R", PVR6, PVL6)) %>%
+  mutate(split_pitcher_zone7 = ifelse(stand == "R", PVR7, PVL7)) %>%
+  mutate(split_pitcher_zone8 = ifelse(stand == "R", PVR8, PVL8)) %>%
+  mutate(split_pitcher_zone9 = ifelse(stand == "R", PVR9, PVL9)) %>%
+  mutate(HZ_Score = ifelse(p_throws == "R", ifelse(stand=="R", (BVR1-PVR1)^2 + (BVR2-PVR2)^2 + (BVR3-PVR3)^2 + (BVR4-PVR4)^2 + (BVR5-PVR5)^2 + (BVR6-PVR6)^2 + (BVR7-PVR7)^2 + (BVR8-PVR8)^2 + (BVR9-PVR9)^2, (BVR1-PVL1)^2 + (BVR2-PVL2)^2 + (BVR3-PVL3)^2 + (BVR4-PVL4)^2 + (BVR5-PVL5)^2 + (BVR6-PVL6)^2 + (BVR7-PVL7)^2 + (BVR8-PVL8)^2 + (BVR9-PVL9)^2), ifelse(stand=="R", (BVL1-PVR1)^2 + (BVL2-PVR2)^2 + (BVL3-PVR3)^2 + (BVL4-PVR4)^2 + (BVL5-PVR5)^2 + (BVL6-PVR6)^2 + (BVL7-PVR7)^2 + (BVL8-PVR8)^2 + (BVL9-PVR9)^2, (BVL1-PVL1)^2 + (BVL2-PVL2)^2 + (BVL3-PVL3)^2 + (BVL4-PVL4)^2 + (BVL5-PVL5)^2 + (BVL6-PVL6)^2 + (BVL7-PVL7)^2 + (BVL8-PVL8)^2 + (BVL9-PVL9)^2))) %>%
+  
+  select(pitcher_name, batter_name, pitcher_age, start_speed, pitch_speed, pitch_type.x, px, pz, stand, batter_BB, batter_K, batter_AVG, batter_OBP, batter_SLG, batter_ISO, batter_wRC, batter_wRAA, batter_wOBA, batter_LD, batter_FB, batter_HRFB, pitcher_BB, pitcher_K, pitcher_AVG, pitcher_OBP, pitcher_SLG, pitcher_ISO, pitcher_WHIP, pitcher_FIP, pitcher_LD, pitcher_FB, pitcher_HRFB, split_batter_BB, split_batter_K, split_batter_AVG, split_batter_OBP, split_batter_SLG, split_batter_ISO, split_batter_wRC, split_batter_wRAA, split_batter_wOBA, split_batter_LD, split_batter_FB, split_batter_HRFB, split_pitcher_BB, split_pitcher_K, split_pitcher_AVG, split_pitcher_OBP, split_pitcher_SLG, split_pitcher_ISO, split_pitcher_WHIP, split_pitcher_FIP, split_pitcher_LD, split_pitcher_FB, split_pitcher_HRFB, split_batter_zone1, split_batter_zone2, split_batter_zone3, split_batter_zone4, split_batter_zone5, split_batter_zone6, split_batter_zone7, split_batter_zone8, split_batter_zone9, split_pitcher_zone1, split_pitcher_zone2, split_pitcher_zone3, split_pitcher_zone4, split_pitcher_zone5, split_pitcher_zone6, split_pitcher_zone7, split_pitcher_zone8, split_pitcher_zone9, HZ_Score, movement)
+```
+
+```{r}
+write.csv(reg_data, 'master.csv')
+```
+
+
+# Removing highly correlated features (tested with and without this):
+
+```{r}
+nums <- sapply(reg_data, is.numeric)
+reg_data.numeric <- reg_data[ , nums]
+
+reg_data.without_na <- na.omit(reg_data.numeric)
+cor_matrix <- cor(reg_data.without_na)
+
+highlyCorrelated <- findCorrelation(cor_matrix, 0.7)
+
+correlated <- reg_data.without_na[,-c(highlyCorrelated)] 
+
+reg_without_na <- na.omit(reg_data)
+reg_without_na <- reg_without_na[, -match(colnames(reg_data.numeric), colnames(reg_without_na))] 
+final_data <- merge(reg_without_na, correlated, by=0)
+```
+
+```{r}
+write.csv(final_data, 'master_uncorrelated.csv')
+```
