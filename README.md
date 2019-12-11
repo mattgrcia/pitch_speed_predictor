@@ -81,12 +81,17 @@ pitcher_detector.py
 In addition to these statistics more grounded in "normal" measurements, an additional feature is added to account for a pitcher's horizontal movement in his delivery.  Looking back on highlights from 50 years ago, it seems most pitchers ended in a good fielding position, but also threw significantly slower.  Could this extra motion be affecting pitch speed?
 
 Here is a great example, as Jeurys Familia ends his slider falling off the mound.
- 
+
+<img src="img/original_gif.gif">
+
 <p align="center">
+ <img src="img/start.jpg" width="600">
+ <img src="img/end.jpg" width="600">
+</p>
+
 ![Original gif](img/original_gif.gif?raw=true "Original gif")
 ![Start](img/start.jpg?raw=true "Start")
 ![End](img/end.jpg?raw=true "End")
-</p>
 
 First, video footage must be obtained for each pitcher.  Luckily, <a href="http://pitcherlist.com/">Pitcher List</a> has a collection of gifs for each pitcher's repertoire.  The links to all of these <a href="http://gfycat.com">gfycat</a> gifs are scraped using Selenium and Beautiful Soup in the module <i>gif_scrape.py</i>.  Since these are videos hosted online, <i>gif_rename.py</i> pust the links into a downloadable format and <i>pitcher_movement.py</i> converts them to their true gif format using <a href="http://ffmpeg.com">FFmpeg</a>.  These are then converted into frames in the module <i>gif_to_pic.py</i>.  OpenCV is then called upon to detect the pitcher throughout his motion, though we are most interested in his starting and ending position.  These are found with the <i>pitcher_detector.py</i> module; the center of the rectangular detector is taken for both points and subtracted in the x-direction to estimate overall horizontal motion.  All the steps listed are contained in <b>pitcher_movement.py</b>, which will output a dataframe of pitcher names matched with their average horizontal motion for each pitch type, sent to <i>pitcher_movement.csv</i>.
   
