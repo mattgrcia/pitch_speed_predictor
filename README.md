@@ -2,9 +2,7 @@
 
 With the Astros in the news every other week being attacked for allegedly stealing signs, it seems important that we somehow explore the advantage of knowing what pitch is coming.  Armed with this knowledge, could Houston hitters know not only what pitch was coming, but also the exact speed for which they should gear up?  This code makes use of historical stats and pitcher trends to examine that question.
 
-<img src="img/steal1.jpg" width="400">
-<img src="img/steal2.jpg" width="400">
-<img src="img/steal3.jpg" width="400">
+<img src="img/steal1.jpg" width="350"><img src="img/steal2.jpg" width="350"><img src="img/steal3.jpg" width="350">
 
 Database creation is similar to that in <a href="http://github.com/mattgrcia/home_run_predictor">this project</a>.
 
@@ -57,8 +55,8 @@ Main file - data/create_master.Rmd
 
 Using the <a href="http://github.com/cpsievert/pitchRx">pitchRx</a> package, a database is created with the information on every pitch within the selected date range.  From this information, outcomes (singles, doubles, flyouts, etc.) in order to determine stats.  Basic, advanced, and split stats are created, as well as hot zone statistics.  A hot zone graph looks like this:
 
-<img src="img/hotzone1.jpg" width="400">
-<img src="img/hotzone2.jpg" width="400">
+<img src="img/hotzone1.png" width="550">
+<img src="img/hotzone2.jpg" width="550">
 
 Each pitcher and hitter has a slugging percentage in each zone.  These are ranked by zone, creating a psuedo-power center profile for each player.
 
