@@ -2,7 +2,7 @@
 
 With the Astros in the news every other week being attacked for allegedly stealing signs, it seems important that we somehow explore the advantage of knowing what pitch is coming.  Armed with this knowledge, could Houston hitters know not only what pitch was coming, but also the exact speed for which they should gear up?  This code makes use of historical stats and pitcher trends to examine that question.
 
-<img src="img/steal1.jpg" width="250"><img src="img/steal2.jpg" width="250"><img src="img/steal3.jpg" width="250">
+<img src="img/steal1.jpg" width="250" style="padding:10px"><img src="img/steal2.jpg" width="250"><img src="img/steal3.jpg" width="250">
 
 Database creation is similar to that in <a href="http://github.com/mattgrcia/home_run_predictor">this project</a>.
 
