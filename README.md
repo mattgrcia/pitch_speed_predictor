@@ -49,7 +49,7 @@ git clone https://github.com/mattgrcia/home_run_predictor
 Main file - data/create_master.Rmd
 ```
 
-Using the <a href="http://github.com/cpsievert/pitchRx">pitchRx</a> package, a database is created with the information on every pitch within the selected date range.  From this information, outcomes (singles, doubles, flyouts, etc.) in order to determine stats.  Basic, advanced, and split stats are created, as well as hot zone statistics.  A hot zone graph, also referred to as a heat map, looks like this:
+Using the <a href="http://github.com/cpsievert/pitchRx">pitchRx</a> package, a database is created with the information on every pitch within the selected date range.  From this information, outcomes (singles, doubles, flyouts, etc.) in order to determine stats.  Basic, advanced, and split stats are created, as well as hot zone statistics.  A hot zone graph looks like this:
 
 ![Hot Zone](img/hotzone.png?raw=true "Hot Zone")
 
@@ -63,6 +63,12 @@ The same process is then run (without the stats collection) to get all atbats fo
 
 ```
 Main file - data/pitcher_movement.py
+
+Modules -
+gif_scrape.py
+gif_rename.py
+gif_to_pic.py
+pitcher_detector.py
 ```
 
 In addition to these statistics more grounded in "normal" measurements, an additional feature is added to account for a pitcher's horizontal movement in his delivery.  Looking back on highlights from 50 years ago, it seems most pitchers ended in a good fielding position, but also threw significantly slower.  Could this extra motion be affecting pitch speed?
