@@ -85,8 +85,8 @@ Here is a great example, as Jeurys Familia ends his slider falling off the mound
 <img src="img/original_gif.gif">
 
 <p align="center">
- <img src="img/start.jpg" width="600">
- <img src="img/end.jpg" width="600">
+ <img src="img/start.jpg" width="300">
+ <img src="img/end.jpg" width="300">
 </p>
 
 ![Original gif](img/original_gif.gif?raw=true "Original gif")
