@@ -69,9 +69,9 @@ First, video footage must be obtained for each pitcher.  Luckily, <a href="http:
   
 Here is a great example, as Jeurys Familia ends his slider falling off the mound.
   
-![Original gif](img/original.gif?raw=true "Original gif")
-![Start](img/original.gif?raw=true "Start")
-![End](img/original.gif?raw=true "End")
+![Original gif](img/original_gif.gif?raw=true "Original gif")
+![Start](img/start.jpg?raw=true "Start")
+![End](img/end.jpg?raw=true "End")
   
 
 There is code in <b>create_master.Rmd</b> to pull in <i>pitcher_movement.csv</i> and integrate it into the stats for each pitcher.
