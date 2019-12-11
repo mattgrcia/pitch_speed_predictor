@@ -20,6 +20,8 @@ git clone https://github.com/mattgrcia/home_run_predictor
 
 <a href="https://www.ffmpeg.org/">FFmpeg</a>
 
+<a href="https://opencv.org/">OpenCV</a>
+
 #### Recommended
 
 <a href="http://rstudio.com/products/rstudio/">RStudio</a>
