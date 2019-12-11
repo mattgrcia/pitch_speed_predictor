@@ -57,8 +57,10 @@ Main file - data/create_master.Rmd
 
 Using the <a href="http://github.com/cpsievert/pitchRx">pitchRx</a> package, a database is created with the information on every pitch within the selected date range.  From this information, outcomes (singles, doubles, flyouts, etc.) in order to determine stats.  Basic, advanced, and split stats are created, as well as hot zone statistics.  A hot zone graph looks like this:
 
-<img src="img/hotzone1.png" width="600">
-<img src="img/hotzone2.jpg" width="600">
+<p align="center">
+ <img src="img/hotzone1.png" width="400">
+ <img src="img/hotzone2.jpg" width="400">
+</p>
 
 Each pitcher and hitter has a slugging percentage in each zone.  These are ranked by zone, creating a psuedo-power center profile for each player.
 
@@ -85,8 +87,8 @@ Here is a great example, as Jeurys Familia ends his slider falling off the mound
 <img src="img/original_gif.gif">
 
 <p align="center">
- <img src="img/start.jpg" width="300">
- <img src="img/end.jpg" width="300">
+ <img src="img/start.jpg" width="400">
+ <img src="img/end.jpg" width="400">
 </p>
 
 ![Original gif](img/original_gif.gif?raw=true "Original gif")
