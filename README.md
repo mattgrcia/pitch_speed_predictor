@@ -97,17 +97,16 @@ Optional file - training/gbm_model.ipynb
 
 Now that you have a data set ready for training, you have some options in terms of modeling.  Optionally, you can choose to train a gradient-boosted model (XGBoost in this case).  The optional file will allow you to tune hyperparameters and select a model to save.  The main file will allow you to train the following sci-kit learn models:
 
-<a href="http://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LogisticRegression.html">Logistic Regression</a>
+<a href="http://scikit-learn.org/stable/modules/generated/sklearn.linear_model.LinearRegression.html">Linear Regression</a>
 
-<a href="http://scikit-learn.org/stable/modules/generated/sklearn.naive_bayes.GaussianNB.html">Gaussian Naive Bayes</a>
+<a href="https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Lasso.html">Lasso</a>
 
-<a href="http://scikit-learn.org/stable/modules/generated/sklearn.tree.DecisionTreeClassifier.htmlDecision">Decision Tree</a>
+<a href="https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.Ridge.html">Ridge</a>
 
-<a href="http://scikit-learn.org/stable/modules/generated/sklearn.ensemble.RandomForestClassifier.html">Random Forest</a>
+<a href="https://scikit-learn.org/stable/modules/generated/sklearn.linear_model.ElasticNet.html">Elastic Net</a>
 
 Of course, you can add to this list by appropriately importing and adding a model to <i>scaled_models</i> or <i>unscaled_models</i>.
 
-Unsurprisingly, there is a very large class imbalance issue, as we would not expect anywhere near half of MLB atbats to result in home runs.  The true ratio is about 97:3 in favor of non-home run atbats.  Therefore, this code makes use of oversampling to balance the dataset for training purposes.  Running through the code will allow you to evaluate models training on oversampled data and those trained on the unaltered data.  Once you select and save a model, you are ready to make predictions on current/future matchups.
 
 #### Predicting
 
@@ -117,14 +116,6 @@ File 2 - predictions/create_matchups.Rmd
 File 3 - predictions/generate_predictions.ipynb
 ```
 
-Generating predictions for a specific day will take three steps.  First, you must use File 1 to scrape up-to-date information on projected starting pitchers and lineups.  After downloading your DraftKings playerpool file for the day (saved by default as 'DKSalaries.csv'), this code will spit out a file of pitcher-hitter matchups on which a model could predict, assuming the required stats were included.
-
-These stats are introduced by running File 2, which will then output a matchups file with all the stats you need to run File 3 and generate predictions for the day.
-
-
 ### Further Implementation
 
 To make this more scalable, stats should be left in and pulled from a SQL database, rather than my showcasing the ability to use R and Python.
-
-The DraftKings playerpool download will be automated once the 2020 baseball season rolls around.
-
